@@ -570,6 +570,19 @@ export default function App() {
     );
   }, [data.tools?.tools, toolGroupToolFilter, toolGroupToolServerFilter]);
 
+  const selectedToolGroupToolsByServer = useMemo(() => {
+    const toolsByCanonicalName = new Map((data.tools?.tools ?? []).map((tool) => [tool.canonical_name, tool]));
+    const groups = new Map<string, { canonicalName: string; name: string }[]>();
+    for (const canonicalName of toolGroupForm.selectedTools) {
+      const tool = toolsByCanonicalName.get(canonicalName);
+      const separator = canonicalName.indexOf("__");
+      const server = tool?.server ?? (separator > 0 ? canonicalName.slice(0, separator) : "other");
+      const name = tool?.name ?? (separator > 0 ? canonicalName.slice(separator + 2) : canonicalName);
+      groups.set(server, [...(groups.get(server) ?? []), { canonicalName, name }]);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [data.tools?.tools, toolGroupForm.selectedTools]);
+
   const filteredPrompts = useMemo(() => {
     const prompts = data.prompts?.prompts ?? [];
     if (!promptFilter.trim()) {
@@ -690,6 +703,20 @@ export default function App() {
         ? current.selectedTools.filter((name) => name !== canonicalName)
         : [...current.selectedTools, canonicalName],
     }));
+  }
+
+  function selectAllShownToolGroupTools() {
+    setToolGroupForm((current) => {
+      const selected = new Set(current.selectedTools);
+      const additions = availableToolGroupTools
+        .map((tool) => tool.canonical_name)
+        .filter((canonicalName) => !selected.has(canonicalName));
+      return { ...current, selectedTools: [...current.selectedTools, ...additions] };
+    });
+  }
+
+  function clearToolGroupSelection() {
+    setToolGroupForm((current) => ({ ...current, selectedTools: [] }));
   }
 
   function removeToolGroupSelection(canonicalName: string) {
@@ -1841,14 +1868,20 @@ export default function App() {
                   <div className="tool-group-selector panel">
                     <div className="tool-group-selector-header">
                       <strong>Available tools</strong>
+                      {availableToolGroupTools.length > 0 ? (
+                        <button className="text-action" onClick={selectAllShownToolGroupTools} type="button">
+                          Select all shown
+                        </button>
+                      ) : null}
                     </div>
                     {(data.tools?.tools.length ?? 0) > 0 ? (
                       <>
-                        <div className="toolbar-cluster">
+                        <div className="tool-group-toolbar">
                           <input
                             className="table-filter compact-filter"
                             onChange={(event) => setToolGroupToolFilter(event.target.value)}
                             placeholder="Search tools"
+                            type="search"
                             value={toolGroupToolFilter}
                           />
                           <select
@@ -1865,21 +1898,25 @@ export default function App() {
                           </select>
                         </div>
                         <div className="tool-pick-list">
+                          {availableToolGroupTools.length === 0 ? (
+                            <p className="empty-inline">No tools match your search.</p>
+                          ) : null}
                           {availableToolGroupTools.map((tool) => {
                             const selected = toolGroupForm.selectedTools.includes(tool.canonical_name);
                             return (
-                              <button
+                              <label
                                 className={`tool-pick-item ${selected ? "is-selected" : ""}`}
                                 key={tool.canonical_name}
-                                onClick={() => toggleToolGroupSelection(tool.canonical_name)}
-                                type="button"
+                                title={tool.canonical_name}
                               >
-                                <div className="table-primary">{tool.name}</div>
-                                <code className="identifier-code" title={tool.canonical_name}>
-                                  {tool.canonical_name}
-                                </code>
-                                <div className="table-secondary">{tool.server}</div>
-                              </button>
+                                <input
+                                  checked={selected}
+                                  onChange={() => toggleToolGroupSelection(tool.canonical_name)}
+                                  type="checkbox"
+                                />
+                                <span className="tool-pick-name">{tool.name}</span>
+                                <span className="tool-pick-server">{tool.server}</span>
+                              </label>
                             );
                           })}
                         </div>
@@ -1891,20 +1928,36 @@ export default function App() {
 
                   <div className="tool-group-selector panel">
                     <div className="tool-group-selector-header">
-                      <strong>Selected tools</strong>
+                      <strong>Selected ({toolGroupForm.selectedTools.length})</strong>
+                      {toolGroupForm.selectedTools.length > 0 ? (
+                        <button className="text-action" onClick={clearToolGroupSelection} type="button">
+                          Clear all
+                        </button>
+                      ) : null}
                     </div>
-                    {toolGroupForm.selectedTools.length > 0 ? (
+                    {selectedToolGroupToolsByServer.length > 0 ? (
                       <div className="selected-tool-list">
-                        {toolGroupForm.selectedTools.map((toolName) => (
-                          <button
-                            className="selected-tool-chip"
-                            key={toolName}
-                            onClick={() => removeToolGroupSelection(toolName)}
-                            type="button"
-                          >
-                            <code>{toolName}</code>
-                            <span>Remove</span>
-                          </button>
+                        {selectedToolGroupToolsByServer.map(([server, tools]) => (
+                          <div className="selected-tool-group" key={server}>
+                            <div className="selected-tool-server">
+                              {server} <span>{tools.length}</span>
+                            </div>
+                            <div className="selected-tool-chips">
+                              {tools.map(({ canonicalName, name }) => (
+                                <button
+                                  aria-label={`Remove ${canonicalName}`}
+                                  className="selected-tool-chip"
+                                  key={canonicalName}
+                                  onClick={() => removeToolGroupSelection(canonicalName)}
+                                  title={canonicalName}
+                                  type="button"
+                                >
+                                  <code>{name}</code>
+                                  <span aria-hidden="true">×</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     ) : (
