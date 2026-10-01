@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import logoUrl from "@repo-assets/logo.png";
 import { api } from "@/lib/api";
 import type {
@@ -453,6 +453,31 @@ function createInitialToolGroupForm(): ToolGroupFormState {
   };
 }
 
+function IndeterminateCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
+  return (
+    <input
+      checked={checked}
+      onChange={() => onChange(!checked)}
+      ref={ref}
+      type="checkbox"
+    />
+  );
+}
+
 export default function App() {
   const [section, setSection] = useState<AppSection>("servers");
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -465,6 +490,7 @@ export default function App() {
   const [promptFilter, setPromptFilter] = useState("");
   const [toolGroupToolFilter, setToolGroupToolFilter] = useState("");
   const [toolGroupToolServerFilter, setToolGroupToolServerFilter] = useState("all");
+  const [collapsedToolGroupServers, setCollapsedToolGroupServers] = useState<string[]>([]);
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
   const [expandedTool, setExpandedTool] = useState<string | null>(null);
   const [expandedToolGroup, setExpandedToolGroup] = useState<string | null>(null);
@@ -569,6 +595,14 @@ export default function App() {
         toolDescription(tool).toLowerCase().includes(term),
     );
   }, [data.tools?.tools, toolGroupToolFilter, toolGroupToolServerFilter]);
+
+  const availableToolGroupToolsByServer = useMemo(() => {
+    const groups = new Map<string, DashboardTool[]>();
+    for (const tool of availableToolGroupTools) {
+      groups.set(tool.server, [...(groups.get(tool.server) ?? []), tool]);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [availableToolGroupTools]);
 
   const selectedToolGroupToolsByServer = useMemo(() => {
     const toolsByCanonicalName = new Map((data.tools?.tools ?? []).map((tool) => [tool.canonical_name, tool]));
@@ -694,6 +728,7 @@ export default function App() {
     setToolGroupOpen(false);
     setToolGroupForm(createInitialToolGroupForm());
     setToolGroupError("");
+    setCollapsedToolGroupServers([]);
   }
 
   function toggleToolGroupSelection(canonicalName: string) {
@@ -713,6 +748,20 @@ export default function App() {
         .filter((canonicalName) => !selected.has(canonicalName));
       return { ...current, selectedTools: [...current.selectedTools, ...additions] };
     });
+  }
+
+  function setToolGroupServerSelection(canonicalNames: string[], checked: boolean) {
+    setToolGroupForm((current) => {
+      const names = new Set(canonicalNames);
+      const remaining = current.selectedTools.filter((name) => !names.has(name));
+      return { ...current, selectedTools: checked ? [...remaining, ...canonicalNames] : remaining };
+    });
+  }
+
+  function toggleToolGroupServerCollapsed(server: string) {
+    setCollapsedToolGroupServers((current) =>
+      current.includes(server) ? current.filter((name) => name !== server) : [...current, server],
+    );
   }
 
   function clearToolGroupSelection() {
@@ -1901,22 +1950,60 @@ export default function App() {
                           {availableToolGroupTools.length === 0 ? (
                             <p className="empty-inline">No tools match your search.</p>
                           ) : null}
-                          {availableToolGroupTools.map((tool) => {
-                            const selected = toolGroupForm.selectedTools.includes(tool.canonical_name);
+                          {availableToolGroupToolsByServer.map(([server, tools]) => {
+                            const selectedCount = tools.filter((tool) =>
+                              toolGroupForm.selectedTools.includes(tool.canonical_name),
+                            ).length;
+                            const collapsed = collapsedToolGroupServers.includes(server) && !toolGroupToolFilter.trim();
                             return (
-                              <label
-                                className={`tool-pick-item ${selected ? "is-selected" : ""}`}
-                                key={tool.canonical_name}
-                                title={tool.canonical_name}
-                              >
-                                <input
-                                  checked={selected}
-                                  onChange={() => toggleToolGroupSelection(tool.canonical_name)}
-                                  type="checkbox"
-                                />
-                                <span className="tool-pick-name">{tool.name}</span>
-                                <span className="tool-pick-server">{tool.server}</span>
-                              </label>
+                              <div className="tool-pick-group" key={server}>
+                                <div className={`tool-pick-server-row ${selectedCount > 0 ? "is-selected" : ""}`}>
+                                  <label className="tool-pick-server-label">
+                                    <IndeterminateCheckbox
+                                      checked={selectedCount === tools.length}
+                                      indeterminate={selectedCount > 0 && selectedCount < tools.length}
+                                      onChange={(checked) =>
+                                        setToolGroupServerSelection(
+                                          tools.map((tool) => tool.canonical_name),
+                                          checked,
+                                        )
+                                      }
+                                    />
+                                    <span className="tool-pick-name">{server}</span>
+                                  </label>
+                                  <span className="tool-pick-count">
+                                    {selectedCount}/{tools.length}
+                                  </span>
+                                  <button
+                                    aria-expanded={!collapsed}
+                                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${server}`}
+                                    className="tool-pick-toggle"
+                                    onClick={() => toggleToolGroupServerCollapsed(server)}
+                                    type="button"
+                                  >
+                                    {collapsed ? "▸" : "▾"}
+                                  </button>
+                                </div>
+                                {collapsed
+                                  ? null
+                                  : tools.map((tool) => {
+                                      const selected = toolGroupForm.selectedTools.includes(tool.canonical_name);
+                                      return (
+                                        <label
+                                          className={`tool-pick-item ${selected ? "is-selected" : ""}`}
+                                          key={tool.canonical_name}
+                                          title={tool.canonical_name}
+                                        >
+                                          <input
+                                            checked={selected}
+                                            onChange={() => toggleToolGroupSelection(tool.canonical_name)}
+                                            type="checkbox"
+                                          />
+                                          <span className="tool-pick-name">{tool.name}</span>
+                                        </label>
+                                      );
+                                    })}
+                              </div>
                             );
                           })}
                         </div>
